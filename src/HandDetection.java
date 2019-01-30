@@ -4,6 +4,7 @@ import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.CascadeClassifier;
 import org.opencv.videoio.VideoCapture;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -19,84 +20,121 @@ public class HandDetection {
      **/
 
     public static int histogramCompression = 8;
-    public static int compressionRate = 1;
+    public static int compressionRate = 2;
     public static String videoPath = "/home/gkammer/Documents/UROP/london.m4v";
-    public static int histogramSize = 256/histogramCompression;
+    public static String timeChartLocation = "/home/gkammer/Documents/UROP/london_test.csv";
+    public static String cascadeClassifierLocation = "/home/gkammer/Downloads/opencv-3.4.4/data/haarcascades/haarcascade_frontalface_defamatult.xml";
+    public static String savePath = "/home/gkammer/Documents/UROP/final";
 
 
     /**
      * END OF USER-MODIFIABLE VARIABLES
      **/
 
+    public static int histogramSize = 256/histogramCompression;
+
     public static void main(String args[]) {
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
-
         int currentFrame = 0;
-        int startFrame = 1595;
-        int endFrame = 1600;
         VideoCapture videoCapture = new VideoCapture(videoPath);
+        ArrayList<double[]> strokeFrames = CreateStrokeArrayFromFile(timeChartLocation);
+        for (double[] i: strokeFrames) {
+            i[0] = (int)(29.97*i[0]);
+            i[1] = (int)(29.97*i[1]);
+        } //change from seconds to frames
 
-        Mat originalMat = new Mat();
         Mat finalMat = new Mat();
         Mat uncompressedMat = new Mat();
-        while (currentFrame < startFrame) {
-            if (videoCapture.read(uncompressedMat)) {
-                finalMat = CompressMat(uncompressedMat, compressionRate);
-                currentFrame++;
-            } else {
-                System.out.println("Unable to read from file!");
-                break;
-            }
-        }
-        for (int r = 0; r < finalMat.rows(); r++) {
-            for (int c = 0; c < finalMat.cols(); c++) {
-                finalMat.put(r, c, new double[] {0, 0, 0});
-            }
-        }
-        while (currentFrame < endFrame) {
+        if (videoCapture.read(uncompressedMat)) {
+            finalMat = CompressMat(uncompressedMat, compressionRate);
             currentFrame++;
-            if (videoCapture.read(uncompressedMat)) {
-                originalMat = CompressMat(uncompressedMat, compressionRate);
-                Mat hsvMat = new Mat();
-                Mat bwMat = new Mat();
+        } else {
+            System.out.println("Unable to read from file!");
+        }
 
-                Imgproc.cvtColor(originalMat, hsvMat, Imgproc.COLOR_BGR2HSV);
+        for (double[] times: strokeFrames) {
+            System.out.println("Starting new stroke");
+            Mat[] originalMats = new Mat[(int)(times[1]-times[0])];
+            Mat[] finalBwMats = new Mat[(int)(times[1]-times[0])];
 
-                CascadeClassifier faceDetector = new CascadeClassifier("/home/gkammer/Downloads/opencv-3.4.4/data/haarcascades/haarcascade_frontalface_defamatult.xml");
-                MatOfRect faceDetections = new MatOfRect();
-                faceDetector.detectMultiScale(originalMat, faceDetections, 1.05, 5);
-                //DisplayMat(originalMat);
-                boolean[][][] skinHistogram = new boolean[histogramSize][histogramSize][histogramSize];
-                if (faceDetections.toArray().length >= 1) {
-                    skinHistogram = CreateSkinHistogram(hsvMat, faceDetections.toArray()[0]);
-                    Scalar minValues = new Scalar(0, 0, 0);
-                    Scalar maxValues = new Scalar(40, 255, 255);
-                    Core.inRange(hsvMat, minValues, maxValues, bwMat);
-                    //DisplayMat(bwMat);
-                    ApplyHistogramFilter(hsvMat, bwMat, skinHistogram);
-                    SeparateEdges(bwMat, originalMat, 300, 750, 7);
-                    //DisplayMat(bwMat);
-                    EraseSmallBlobNoise(bwMat, originalMat, faceDetections.toArray()[0], 3);
-                    DisplayMat(bwMat);
-                    Mat dilateElement = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(2, 2));
-                    Imgproc.dilate(bwMat, bwMat, dilateElement);
-                    for (int r = 0; r < finalMat.rows(); r++) {
-                        for (int c = 0; c < finalMat.cols(); c++) {
-                            if (bwMat.get(r, c)[0] > 0) {
-                                finalMat.put(r, c, new double[] {255*(endFrame-currentFrame)/(endFrame - startFrame), 0, 255*(currentFrame-startFrame)/(endFrame - startFrame)});
+            for (int r = 0; r < finalMat.rows(); r++) {
+                for (int c = 0; c < finalMat.cols(); c++) {
+                    finalMat.put(r, c, new double[] {0, 0, 0});
+                }
+            } //set finalMat to all black
+
+            while (currentFrame < times[0]) {
+                if (videoCapture.read(uncompressedMat)) {
+                    currentFrame++;
+                } else {
+                    System.out.println("Unable to read from file!");
+                    break;
+                }
+            } //Get to the first used frame
+
+            while (currentFrame < times[1]) {
+                int frameNumber = currentFrame-(int)times[0];
+                System.out.println(frameNumber);
+                currentFrame++;
+                if (videoCapture.read(uncompressedMat)) {
+                    originalMats[frameNumber] = CompressMat(uncompressedMat, compressionRate);
+                    Mat hsvMat = new Mat();
+                    Mat skinColorMat = new Mat();
+                    Mat bwMat = new Mat();
+
+                    Imgproc.cvtColor(originalMats[frameNumber], hsvMat, Imgproc.COLOR_BGR2HSV);
+                    MatOfRect faceDetections = new MatOfRect();
+                    CascadeClassifier faceDetector = new CascadeClassifier(cascadeClassifierLocation);
+                    faceDetector.detectMultiScale(originalMats[frameNumber], faceDetections, 1.05, 5);
+
+                    //DisplayMat(originalMats[frameNumber]);
+                    boolean[][][] skinHistogram;
+                    if (faceDetections.toArray().length >= 1) {
+                        skinHistogram = CreateSkinHistogram(hsvMat, faceDetections.toArray()[0]);
+                        Core.inRange(hsvMat, new Scalar(0, 0, 0), new Scalar(40, 255, 255), skinColorMat);
+                        Core.inRange(hsvMat, new Scalar(0, 0, 0), new Scalar(40, 255, 255), bwMat);
+                        ApplyHistogramFilter(hsvMat, bwMat, skinHistogram);
+                        //DisplayMat(bwMat);
+                        //SeparateEdges(bwMat, originalMats[frameNumber], 500, 1000, 7);
+                        //DisplayMat(bwMat);
+                        EraseSmallBlobNoise(bwMat, originalMats[frameNumber], faceDetections.toArray()[0], 3);
+                        //DisplayMat(bwMat);
+                        Mat dilateElement = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(20, 20));
+                        Imgproc.dilate(bwMat, bwMat, dilateElement);
+                        finalBwMats[frameNumber] = bwMat;
+                        for (int r = 0; r < finalMat.rows(); r++) {
+                            for (int c = 0; c < finalMat.cols(); c++) {
+                                if (bwMat.get(r, c)[0] > 0 && skinColorMat.get(r, c)[0] > 0) {
+                                    finalMat.put(r, c, new double[]{255 * (times[1] - currentFrame) / (times[1] - times[0]), 0, 255 * (currentFrame - times[0]) / (times[1] - times[0])});
+                                }
                             }
                         }
+                        //DisplayMat(finalMat);
+                    }
+                    else {
+                        System.out.println("No face found");
+                    }
+
+                } else {
+                    System.out.println("Unable to read from file!");
+                }
+            }
+            for (int r = 0; r < finalMat.rows(); r++) {
+                for (int c = 0; c < finalMat.cols(); c++) {
+                    for (int frameNumber = 0; frameNumber < (times[1]-times[0]); frameNumber++) {
+
                     }
                 }
-                else {
-                    System.out.print("No face found");
-                }
-
-            } else {
-                System.out.println("Unable to read from file!");
             }
+
+
+            DisplayMat(finalMat);
+            try {
+                File outputfile = new File(savePath + "_" + times[0] + "-" + times[1]);
+                ImageIO.write(Mat2Image(finalMat), "png", outputfile);
+            } //save the image
+            catch (IOException e) { }
         }
-        DisplayMat(finalMat);
     }
 
 
@@ -126,7 +164,6 @@ public class HandDetection {
         for (int i = blobsToKeep - 1; i >= 0; i--) {
             largestBlobs[i] = new Blob();
         }
-        //DisplayMat(bwMat);
         for (int r = 0; r < bwMat.rows(); r++) {
             for (int c = 0; c < bwMat.cols(); c++) {
                 if (bwMat.get(r, c)[0] > 128) {
@@ -135,7 +172,7 @@ public class HandDetection {
                     double diffGreen = Math.abs(largestBlobs[blobsToKeep].avgRGB[1] - avgRGB[1]);
                     double diffBlue = Math.abs(largestBlobs[blobsToKeep].avgRGB[2] - avgRGB[2]);
                     double totalDiff = Math.sqrt(Math.pow(diffRed, 2) + Math.pow(diffGreen, 2) + Math.pow(diffBlue, 2));
-                    if (totalDiff < 30) {
+                    if (totalDiff < 40) {
                         largestBlobs[blobsToKeep].shadeBlob(1);
                         for (int i = blobsToKeep - 1; i >= 0; i--) {
                             if (largestBlobs[i+1].size > largestBlobs[i].size) {
@@ -150,11 +187,9 @@ public class HandDetection {
         }
         //DisplayMat(bwMat);
         for (int i = 0; i < largestBlobs.length-1; i++) {
-            largestBlobs[i].shadeBlob(255);
-            double diffRed = Math.abs(largestBlobs[i].avgRGB[0] - avgRGB[0]);
-            double diffGreen = Math.abs(largestBlobs[i].avgRGB[1] - avgRGB[1]);
-            double diffBlue = Math.abs(largestBlobs[i].avgRGB[2] - avgRGB[2]);
-            double totalDiff = Math.sqrt(Math.pow(diffRed, 2) + Math.pow(diffGreen, 2) + Math.pow(diffBlue, 2));
+            if (largestBlobs[i].size > 0) {
+                largestBlobs[i].shadeBlob(255);
+            }
         }
         for (int r = 0; r < bwMat.rows(); r++) {
             for (int c = 0; c < bwMat.cols(); c++) {
@@ -168,7 +203,7 @@ public class HandDetection {
 
     /**
     Given a histogram of acceptable HSV skin values, make all pixels outside of those values black in drawableMat
-     **/
+     */
     public static void ApplyHistogramFilter(Mat hsvMat, Mat drawableMat, boolean[][][] histogram) {
         for (int r = 0; r < hsvMat.rows(); r++) {
             for (int c = 0; c < hsvMat.cols(); c++) {
@@ -213,7 +248,7 @@ public class HandDetection {
                         surrounded += skinHistogram[i][Math.min(j + 1, histogramSize-1)][k];
                         surrounded += skinHistogram[i][j][Math.max(k - 1, 0)];
                         surrounded += skinHistogram[i][j][Math.min(k + 1, histogramSize-1)];
-                        if (surrounded < rect.height*rect.width/100) {
+                        if (surrounded < (rect.height*rect.width)/200) {
                             boolHistogram[i][j][k] = false;
                         }
                     }
