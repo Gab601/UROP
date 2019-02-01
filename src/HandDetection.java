@@ -1,5 +1,4 @@
 import org.opencv.core.*;
-import org.opencv.core.Point;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.CascadeClassifier;
 import org.opencv.videoio.VideoCapture;
@@ -34,12 +33,11 @@ public class HandDetection {
 
     public static int histogramSize = 256/histogramCompression;
     public static int currentFrame = 0;
-    public static VideoCapture videoCapture = new VideoCapture(videoPath);
-    public static Mat rawMat = new Mat();
     public static File tempFile = new File(tempSavePath);
 
     public static void main(String args[]) {
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+        VideoCapture videoCapture = new VideoCapture(videoPath);
 
         ArrayList<double[]> strokeFrames = CreateStrokeArrayFromFile(timeChartLocation);
         for (double[] i: strokeFrames) {
@@ -47,115 +45,22 @@ public class HandDetection {
             i[1] = (int)(29.97*i[1]);
         } //change from seconds to frames
 
+        Mat rawMat = new Mat();
         Mat finalMat = new Mat();
+
         if (videoCapture.read(rawMat)) {
             finalMat = CompressMat(rawMat, compressionRate);
             currentFrame++;
-        } else {
+        }
+        else {
             System.out.println("Unable to read from file!");
         }
 
         for (double[] times: strokeFrames) {
-            System.out.println("Starting new stroke");
-            Mat[] originalMats = new Mat[(int)(times[1]-times[0])];
-            Mat[] finalBwMats = new Mat[(int)(times[1]-times[0])];
-
-            for (int r = 0; r < finalMat.rows(); r++) {
-                for (int c = 0; c < finalMat.cols(); c++) {
-                    finalMat.put(r, c, new double[] {0, 0, 0});
-                }
-            } //set finalMat to all black
-
-            while (currentFrame < times[0]) {
-                if (videoCapture.read(rawMat)) {
-                    currentFrame++;
-                } else {
-                    System.out.println("Unable to read from file!");
-                    break;
-                }
-            } //Get to the first used frame
-
-            while (currentFrame < times[1]) {
-                int frameNumber = currentFrame-(int)times[0];
-                System.out.println(frameNumber);
-                currentFrame++;
-                if (videoCapture.read(rawMat)) {
-                    originalMats[frameNumber] = CompressMat(rawMat, compressionRate);
-                    Mat hsvMat = new Mat();
-                    Mat skinColorMat = new Mat();
-                    Mat bwMat = new Mat();
-
-                    try { ImageIO.write(Mat2Image(originalMats[frameNumber]), "png", tempFile); } catch (Exception e) { }
-                    BodyDetection.RemoveBackground(tempSavePath, tempSavePath);
-
-                    BufferedImage tempBuff = null;
-                    try { tempBuff = ImageIO.read(tempFile); } catch (Exception e) { }
-                    originalMats[frameNumber] = Image2Mat(tempBuff);
-
-                    Imgproc.cvtColor(originalMats[frameNumber], hsvMat, Imgproc.COLOR_BGR2HSV);
-                    MatOfRect faceDetections = new MatOfRect();
-                    CascadeClassifier faceDetector = new CascadeClassifier(cascadeClassifierLocation);
-                    faceDetector.detectMultiScale(originalMats[frameNumber], faceDetections, 1.05, 5);
-
-                    //DisplayMat(originalMats[frameNumber]);
-                    boolean[][][] skinHistogram;
-                    if (faceDetections.toArray().length >= 1) {
-                        skinHistogram = CreateSkinHistogram(hsvMat, faceDetections.toArray()[0]);
-                        Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), skinColorMat);
-                        Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), bwMat);
-                        
-                        DisplayMat(bwMat);
-                        
-                        ApplyHistogramFilter(hsvMat, bwMat, skinHistogram);
-                        
-                        DisplayMat(bwMat);
-                        
-                        EraseSmallBlobNoise(bwMat, originalMats[frameNumber], faceDetections.toArray()[0], 3);
-                        
-                        DisplayMat(bwMat);
-                        
-                        Mat dilateElement = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(20, 20));
-                        Imgproc.dilate(bwMat, bwMat, dilateElement);
-                        
-                        finalBwMats[frameNumber] = bwMat;
-                        for (int r = 0; r < finalMat.rows(); r++) {
-                            for (int c = 0; c < finalMat.cols(); c++) {
-                                if (bwMat.get(r, c)[0] > 0 && skinColorMat.get(r, c)[0] > 0) {
-                                    finalMat.put(r, c, new double[]{255 * (times[1] - currentFrame) / (times[1] - times[0]), 0, 255 * (currentFrame - times[0]) / (times[1] - times[0])});
-                                }
-                            }
-                        }
-                        //DisplayMat(finalMat);
-                    }
-                    else {
-                        System.out.println("No face detected");
-                        Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), skinColorMat);
-                        Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), bwMat);
-                        EraseSmallBlobNoise(bwMat, originalMats[frameNumber], 3);
-                        DisplayMat(bwMat);
-                        finalBwMats[frameNumber] = bwMat;
-                        for (int r = 0; r < finalMat.rows(); r++) {
-                            for (int c = 0; c < finalMat.cols(); c++) {
-                                if (bwMat.get(r, c)[0] > 0 && skinColorMat.get(r, c)[0] > 0) {
-                                    finalMat.put(r, c, new double[]{255 * (times[1] - currentFrame) / (times[1] - times[0]), 0, 255 * (currentFrame - times[0]) / (times[1] - times[0])});
-                                }
-                            }
-                        }
-                    }
-
-                } else {
-                    System.out.println("Unable to read from file!");
-                }
-            }
-            for (int r = 0; r < finalMat.rows(); r++) {
-                for (int c = 0; c < finalMat.cols(); c++) {
-                    for (int frameNumber = 0; frameNumber < (times[1]-times[0]); frameNumber++) {
-
-                    }
-                }
-            }
-
-
+            System.out.println("\n\nStarting new stroke");
+            System.out.println("Stroke time: " + Math.round((times[0]/29.97)*10)/10.0 + " to " + Math.round((times[1]/29.97)*10)/10.0 + " seconds (frames " + (int)times[0] + " to " + (int)times[1] + ")");
+            System.out.println("Total number of frames in stroke: " + (int)(times[1]-times[0]));
+            CreateStrokeImage(times, finalMat, videoCapture);
             DisplayMat(finalMat);
             try {
                 File outputfile = new File(savePath + "_" + times[0] + "-" + times[1]);
@@ -165,9 +70,11 @@ public class HandDetection {
         }
     }
     
-    public static void CreateStrokeImage(int[] times, Mat finalMat) {
+    public static void CreateStrokeImage(double[] times, Mat finalMat, VideoCapture videoCapture) {
+        Mat rawMat = new Mat();
         Mat[] originalMats = new Mat[(int)(times[1]-times[0])];
         Mat[] finalBwMats = new Mat[(int)(times[1]-times[0])];
+        Mat[] skinColorMats = new Mat[(int)(times[1]-times[0])];
 
         for (int r = 0; r < finalMat.rows(); r++) {
             for (int c = 0; c < finalMat.cols(); c++) {
@@ -186,8 +93,9 @@ public class HandDetection {
 
         while (currentFrame < times[1]) {
             int frameNumber = currentFrame-(int)times[0];
-            System.out.println(frameNumber);
             currentFrame++;
+            System.out.print("\rCurrent frame: " + (frameNumber+1));
+            System.out.flush();
             if (videoCapture.read(rawMat)) {
                 originalMats[frameNumber] = CompressMat(rawMat, compressionRate);
                 Mat hsvMat = new Mat();
@@ -213,64 +121,60 @@ public class HandDetection {
                     Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), skinColorMat);
                     Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), bwMat);
 
-                    DisplayMat(bwMat);
-
                     ApplyHistogramFilter(hsvMat, bwMat, skinHistogram);
-
-                    DisplayMat(bwMat);
 
                     EraseSmallBlobNoise(bwMat, originalMats[frameNumber], faceDetections.toArray()[0], 3);
 
-                    DisplayMat(bwMat);
-
                     Mat dilateElement = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(20, 20));
                     Imgproc.dilate(bwMat, bwMat, dilateElement);
-
-                    finalBwMats[frameNumber] = bwMat;
-                    for (int r = 0; r < finalMat.rows(); r++) {
-                        for (int c = 0; c < finalMat.cols(); c++) {
-                            if (bwMat.get(r, c)[0] > 0 && skinColorMat.get(r, c)[0] > 0) {
-                                finalMat.put(r, c, new double[]{255 * (times[1] - currentFrame) / (times[1] - times[0]), 0, 255 * (currentFrame - times[0]) / (times[1] - times[0])});
-                            }
-                        }
-                    }
-                    //DisplayMat(finalMat);
                 }
                 else {
-                    System.out.println("No face detected");
+                    System.out.println(" - No face detected");
                     Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), skinColorMat);
                     Core.inRange(hsvMat, new Scalar(0, 1, 1), new Scalar(40, 254, 254), bwMat);
+
                     EraseSmallBlobNoise(bwMat, originalMats[frameNumber], 3);
-                    DisplayMat(bwMat);
-                    finalBwMats[frameNumber] = bwMat;
-                    for (int r = 0; r < finalMat.rows(); r++) {
-                        for (int c = 0; c < finalMat.cols(); c++) {
-                            if (bwMat.get(r, c)[0] > 0 && skinColorMat.get(r, c)[0] > 0) {
-                                finalMat.put(r, c, new double[]{255 * (times[1] - currentFrame) / (times[1] - times[0]), 0, 255 * (currentFrame - times[0]) / (times[1] - times[0])});
-                            }
+                }
+                finalBwMats[frameNumber] = bwMat;
+                skinColorMats[frameNumber] = skinColorMat;
+            } else {
+                System.out.println(" - Unable to read from file!");
+            }
+        }
+        int[] sumColorNonHand = new int[3];
+        int numColorNonHand;
+        Mat avgMat = new Mat(finalMat.rows(), finalMat.cols(), 16);
+        for (int r = 0; r < finalMat.rows(); r++) {
+            for (int c = 0; c < finalMat.cols(); c++) {
+                sumColorNonHand[0] = 0;
+                sumColorNonHand[1] = 0;
+                sumColorNonHand[2] = 0;
+                numColorNonHand = 0;
+                for (int f = 0; f < (times[1]-times[0]); f++) {
+                    if (finalBwMats[f].get(r, c)[0] == 0 && originalMats[f].get(r, c)[0] > 0) {
+                        sumColorNonHand[0] += originalMats[f].get(r, c)[0];
+                        sumColorNonHand[1] += originalMats[f].get(r, c)[1];
+                        sumColorNonHand[2] += originalMats[f].get(r, c)[2];
+                        numColorNonHand++;
+                    }
+                }
+                if (numColorNonHand == 0) {
+                    avgMat.put(r, c, new double[] {0, 0, 0});
+                }
+                else {
+                    avgMat.put(r, c, new double[] {sumColorNonHand[0]/numColorNonHand, sumColorNonHand[1]/numColorNonHand, sumColorNonHand[2]/numColorNonHand});
+                }
+                for (int f = 0; f < (times[1]-times[0]); f++) {
+                    if (finalBwMats[f].get(r, c)[0] > 0 && skinColorMats[f].get(r, c)[0] > 0) {
+                        if (avgMat.get(r, c)[0] == 0 || GetPixelDifference(avgMat.get(r, c), originalMats[f].get(r, c)) > 40) {
+                            finalMat.put(r, c, new double[]{255 * ((times[1]-times[0]) - f) / (times[1] - times[0]), 0, 255 * f / (times[1] - times[0])});
                         }
                     }
                 }
-
-            } else {
-                System.out.println("Unable to read from file!");
             }
-        }
-        for (int r = 0; r < finalMat.rows(); r++) {
-            for (int c = 0; c < finalMat.cols(); c++) {
-                for (int frameNumber = 0; frameNumber < (times[1]-times[0]); frameNumber++) {
+        } //create avgMat which is the average of all non-hand pixels over the timeframe of the stroke, use those values to shade in detected hands only if they are out of the ordinary in that pixel location
+        DisplayMat(avgMat);
 
-                }
-            }
-        }
-
-
-        DisplayMat(finalMat);
-        try {
-            File outputfile = new File(savePath + "_" + times[0] + "-" + times[1]);
-            ImageIO.write(Mat2Image(finalMat), "png", outputfile);
-        } //save the image
-        catch (IOException e) { }
     }
 
 
@@ -304,10 +208,7 @@ public class HandDetection {
             for (int c = 0; c < bwMat.cols(); c++) {
                 if (bwMat.get(r, c)[0] > 128) {
                     largestBlobs[blobsToKeep] = new Blob(bwMat, originalMat, r, c);
-                    double diffRed = Math.abs(largestBlobs[blobsToKeep].avgRGB[0] - avgRGB[0]);
-                    double diffGreen = Math.abs(largestBlobs[blobsToKeep].avgRGB[1] - avgRGB[1]);
-                    double diffBlue = Math.abs(largestBlobs[blobsToKeep].avgRGB[2] - avgRGB[2]);
-                    double totalDiff = Math.sqrt(Math.pow(diffRed, 2) + Math.pow(diffGreen, 2) + Math.pow(diffBlue, 2));
+                    double totalDiff = GetPixelDifference(largestBlobs[blobsToKeep].avgRGB, avgRGB);
                     if (totalDiff < 40) {
                         largestBlobs[blobsToKeep].shadeBlob(1);
                         for (int i = blobsToKeep - 1; i >= 0; i--) {
@@ -681,6 +582,13 @@ public class HandDetection {
                 }
             }
         }
+    }
+
+    public static double GetPixelDifference(double[] p1, double[] p2) {
+        double diffRed = Math.abs(p1[0] - p2[0]);
+        double diffGreen = Math.abs(p1[1] - p2[1]);
+        double diffBlue = Math.abs(p1[2] - p2[2]);
+        return Math.sqrt(Math.pow(diffRed, 2) + Math.pow(diffGreen, 2) + Math.pow(diffBlue, 2));
     }
 
 public enum Background {BLACK, WHITE, AVERAGE, INITIAL, FINAL}
